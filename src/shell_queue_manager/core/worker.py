@@ -148,24 +148,28 @@ class Worker:
                 # Execute the task
                 result = self._execute_script(task)
                 
-                # Check for task failure and send notification
-                success = result.get("exit_code", -1) == 0
-                if not success and self._notify_on_failure and self._email_notifier:
-                    logger.info(f"Sending notification for failed task: {task.task_id}")
-                    self._email_notifier.send_task_failed_notification(result)
-                
-                # Mark as complete
-                self._queue_manager.mark_task_complete(task.task_id, result, success)
-                
-                # Trigger complete callback
-                if self._on_task_complete:
-                    self._on_task_complete(task)
-                
-                # Mark queue task as done
-                self._queue_manager.task_done()
-                
-                with self._queue_manager.get_lock():
-                    self._current_task = None
+                if result.get("exit_code", -1) == -15:
+                    logger.info(f"Task aborted: {task.task_id}, getting next task.")
+                    continue
+                else:
+                    # Check for task failure and send notification
+                    success = result.get("exit_code", -1) == 0
+                    if not success and self._notify_on_failure and self._email_notifier:
+                        logger.info(f"Sending notification for failed task: {task.task_id}")
+                        self._email_notifier.send_task_failed_notification(result)
+                    
+                    # Mark as complete
+                    self._queue_manager.mark_task_complete(task.task_id, result, success)
+                    
+                    # Trigger complete callback
+                    if self._on_task_complete:
+                        self._on_task_complete(task)
+                    
+                    # Mark queue task as done
+                    self._queue_manager.task_done()
+                    
+                    with self._queue_manager.get_lock():
+                        self._current_task = None
                 
             except Exception as e:
                 logger.error(f"Worker error: {e}", exc_info=True)

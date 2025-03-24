@@ -177,7 +177,6 @@ echo "This should not be printed"
     data = json.loads(response.data)
     assert data['status'] == 'canceled'
 
-@pytest.mark.dothis
 def test_abort_tasks_by_path(client, tmp_path):
     """Test aborting tasks by script path."""
     # Create a test script that will be queued multiple times
