@@ -3,6 +3,7 @@ import os
 import subprocess
 import threading
 import time
+import io
 from typing import Dict, Any, Optional, Callable
 
 from shell_queue_manager.core.queue_manager import QueueManager
@@ -105,17 +106,25 @@ class Worker:
         
         self._last_queue_size = current_size
     
-    def _output_reader(self, stream):
-        """Read from a stream line by line and append to the output buffer."""
+    def _output_reader_with_file(self, stream, file):
+        """Read from a stream line by line, append to the output buffer, and write to file."""
         try:
             for line in iter(stream.readline, ''):
                 if line:
+                    # Update in-memory buffer
                     with self._queue_manager.get_lock():
                         self._current_output += line
+                    
+                    # Write to file (no lock needed as file IO is thread-safe)
+                    file.write(line)
+                    file.flush()  # Ensure output is written immediately
         except Exception as e:
-            logger.error(f"Error reading from stream: {e}")
+            error_msg = f"Error reading from stream: {e}"
+            logger.error(error_msg)
             with self._queue_manager.get_lock():
-                self._current_output += f"\nError reading output: {str(e)}\n"
+                self._current_output += f"\n{error_msg}\n"
+            file.write(f"\n{error_msg}\n")
+            file.flush()
         
     def _worker_loop(self) -> None:
         """Main worker loop that processes tasks from the queue."""
@@ -185,43 +194,47 @@ class Worker:
                 except Exception as e:
                     logger.error(f"Failed to make script executable: {e}")
             
-            # Execute script
-            logger.info(f"Executing script: {task.script_path}")
+            # Create output file path (same path as script but with .log extension)
+            output_file = os.path.dirname(task.script_path)+ f'/{task.task_id}.log'
+            logger.info(f"Executing script: {task.script_path}, logging to: {output_file}")
             
-            # Execute the shell script and capture output in real-time
-            # Redirect stderr to stdout to merge the streams
-            self._process = subprocess.Popen(
-                ['/bin/bash', task.script_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # Redirect stderr to stdout
-                text=True,
-                bufsize=1  # Line buffered is sufficient for merged streams
-            )
-            
-            # Setup thread to read merged output in real-time
-            self._output_thread = threading.Thread(
-                target=self._output_reader,
-                args=(self._process.stdout,)
-            )
-            
-            self._output_thread.daemon = True
-            self._output_thread.start()
-            
-            # Wait for process to complete
-            exit_code = self._process.wait()
-            
-            # Wait for reader thread to finish
-            if self._output_thread.is_alive():
-                self._output_thread.join(timeout=1.0)
-            
-            # Ensure we've captured all remaining output
-            try:
-                remaining_output, _ = self._process.communicate(timeout=1.0)
-                if remaining_output:
-                    with self._queue_manager.get_lock():
-                        self._current_output += remaining_output
-            except subprocess.TimeoutExpired:
-                logger.warning("Timeout while reading remaining output")
+            # Open output file for writing
+            with open(output_file, 'w') as f_output:
+                # Execute the shell script and capture output in real-time
+                # Redirect stderr to stdout to merge the streams and tee to file
+                self._process = subprocess.Popen(
+                    ['/bin/bash', task.script_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+                    text=True,
+                    bufsize=1  # Line buffered is sufficient for merged streams
+                )
+                
+                # Setup thread to read merged output in real-time
+                self._output_thread = threading.Thread(
+                    target=self._output_reader_with_file,
+                    args=(self._process.stdout, f_output)
+                )
+                
+                self._output_thread.daemon = True
+                self._output_thread.start()
+                
+                # Wait for process to complete
+                exit_code = self._process.wait()
+                
+                # Wait for reader thread to finish
+                if self._output_thread.is_alive():
+                    self._output_thread.join(timeout=1.0)
+                
+                # Ensure we've captured all remaining output
+                try:
+                    remaining_output, _ = self._process.communicate(timeout=1.0)
+                    if remaining_output:
+                        with self._queue_manager.get_lock():
+                            self._current_output += remaining_output
+                        f_output.write(remaining_output)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Timeout while reading remaining output")
                 
             # Get final output
             with self._queue_manager.get_lock():
@@ -233,6 +246,7 @@ class Worker:
                 "script_path": task.script_path,
                 "exit_code": exit_code,
                 "output": output,
+                "output_file": output_file  # Add path to the output file
             }
             
             return result

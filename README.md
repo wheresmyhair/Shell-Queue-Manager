@@ -8,6 +8,7 @@ A Python service for queueing and executing shell scripts via a REST API.
 - Sequential execution of scripts (no concurrent execution)
 - Priority queue support for urgent scripts
 - Comprehensive status tracking and querying
+- Real-time output monitoring of running scripts
 - Modular design for easy maintenance and extension
 
 ## Installation
@@ -33,21 +34,22 @@ shell-queue
 shell-queue --host 127.0.0.1 --port 8000 --log-file /var/log/shell-queue.log
 ```
 
-### Using Docker
-
-```bash
-# Build and run with Docker Compose
-docker-compose up -d
-```
-
 ### API Usage
 
 Submit a script:
 ```bash
 curl -X POST http://localhost:5000/api/submit \
   -H "Content-Type: application/json" \
-  -d '{"script_path": "/path/to/your/script.sh"}'
+  -d '{"script_path": "/path/to/your/script.sh"}
 ```
+
+### Response Codes
+
+- `200 OK`: Returns the current output successfully
+- `404 Not Found`: No task is currently running
+- `400 Bad Request`: Worker is not running
+- `500 Internal Server Error`: Server error occurred
+
 
 Submit a high-priority script:
 ```bash
@@ -66,113 +68,48 @@ Get task status:
 curl -X GET http://localhost:5000/api/status/{task_id}
 ```
 
-## Email Notifications
-
-Shell Queue Manager supports sending notifications via email to alert you in the following situations:
-
-1. When only a certain number of tasks remain in the queue (default is 1)
-2. When a task execution fails
-
-### Configuring Email Notifications
-
-Email notifications can be configured through the following methods:
-
-#### Environment Variables
-
+Get live output of the currently running script:
 ```bash
-export SHELL_QUEUE_EMAIL_ENABLED=true
-export SHELL_QUEUE_EMAIL_HOST=smtp.example.com
-export SHELL_QUEUE_EMAIL_PORT=587
-export SHELL_QUEUE_EMAIL_USERNAME=your_username
-export SHELL_QUEUE_EMAIL_PASSWORD=your_password
-export SHELL_QUEUE_EMAIL_SENDER=shell-queue@example.com
-export SHELL_QUEUE_EMAIL_RECIPIENTS=admin@example.com,alerts@example.com
-export SHELL_QUEUE_EMAIL_USE_TLS=true
-
-export SHELL_QUEUE_NOTIFY_QUEUE_LOW_THRESHOLD=1
-export SHELL_QUEUE_NOTIFY_ON_TASK_FAILURE=true
+curl -X GET http://localhost:5000/api/live-output
 ```
 
-#### Configuration File
+## Real-time Output Monitoring
 
-Modify the default configuration in config.py:
+Shell Queue Manager now supports monitoring the output of currently running scripts in real time. This feature allows you to:
 
-```python
-DEFAULT_CONFIG = {
-    "EMAIL_ENABLED": True,
-    "EMAIL_HOST": "smtp.example.com",
-    "EMAIL_PORT": 587,
-    "EMAIL_USERNAME": "your_username",
-    "EMAIL_PASSWORD": "your_password",
-    "EMAIL_SENDER": "shell-queue@example.com",
-    "EMAIL_RECIPIENTS": ["admin@example.com"],
-    "EMAIL_USE_TLS": True,
-    
-    "NOTIFY_QUEUE_LOW_THRESHOLD": 1,
-    "NOTIFY_ON_TASK_FAILURE": True,
-}
-```
+- Check the current output of the running script
+- Monitor script progress without waiting for completion
+- Debug scripts as they execute
 
-## Private Configuration Management
+All script output (both stdout and stderr) is automatically saved to a log file with the same name as the script but with a .log extension. For example, if you run `/path/to/script.sh`, the output will be saved to `/path/to/<task_id>.log`.
 
-Shell Queue Manager supports using private configuration files to store sensitive information (such as email passwords) that won't be committed to version control systems.
+### Example Usage:
 
-### Configuration File Location
+To monitor the output of a script in real-time:
 
-The system will look for private configuration files in the following priority order:
-
-1. `shell_queue_manager/private_config.json` (in-package configuration)
-2. `repo_dir/private_config.json` (project configuration)
-
-### Creating Private Configuration
-
-You can use the configuration management tool to create configuration files:
-
+1. Submit a script to the queue:
 ```bash
-python -m shell_queue_manager.cli.config_manager create
-
-# Specify save path
-python -m shell_queue_manager.cli.config_manager create --path /path/to/private_config.json
-
-# Use default template (non-interactive)
-python -m shell_queue_manager.cli.config_manager create --non-interactive
+curl -X POST http://localhost:5000/api/submit \
+  -H "Content-Type: application/json" \
+  -d '{"script_path": "/path/to/your/script.sh"}'
 ```
 
-### View Current Configuration
-
+2. Check the live output as it runs:
 ```bash
-python -m shell_queue_manager.cli.config_manager show
+curl -X GET http://localhost:5000/api/live-output
 ```
 
-### Private Configuration Example
+3. Poll regularly to see progress:
+```bash
+# Using watch to poll every 2 seconds
+watch -n 2 'curl -s http://localhost:5000/api/live-output'
+```
 
+The response will include the current stdout and stderr:
 ```json
 {
-    "EMAIL_ENABLED": true,
-    "EMAIL_HOST": "smtp.example.com",
-    "EMAIL_PORT": 587,
-    "EMAIL_USERNAME": "your_username",
-    "EMAIL_PASSWORD": "your_password",
-    "EMAIL_SENDER": "shell-queue@example.com",
-    "EMAIL_RECIPIENTS": [
-        "admin@example.com",
-        "alerts@example.com"
-    ],
-    "EMAIL_USE_TLS": true,
-    "NOTIFY_QUEUE_LOW_THRESHOLD": 1,
-    "NOTIFY_ON_TASK_FAILURE": true
+  "status": "success",
+  "task_id": "12345678-1234-5678-1234-567812345678",
+  "script_path": "/path/to/your/script.sh",
+  "output": "Starting process...\nInitializing data...\n"
 }
-```
-
-### Configuration Loading Priority
-
-The system loads configurations in the following priority order:
-
-1. Environment variables (highest priority)
-2. Private configuration file
-3. Default configuration (lowest priority)
-
-The project's `.gitignore` file is already configured to ignore private configuration files (private_config.json). Please ensure you don't commit configuration files containing sensitive information to the version control system.
-
-## License
-Apache 2.0

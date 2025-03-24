@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from http import HTTPStatus
 
@@ -117,6 +118,16 @@ echo "Script finished"
     data = json.loads(response.data)
     print(data)
     assert data['status'] == 'completed'
+    
+    # Verify output file was created
+    output_file = os.path.dirname(script_path) + f"/{task_id}.log"
+    assert os.path.exists(output_file), f"Output file not created: {output_file}"
+    
+    # Check output file contents
+    with open(output_file, 'r') as f:
+        file_content = f.read()
+        assert "Starting test script" in file_content
+        assert "Script finished" in file_content
     
     # Check that live output endpoint correctly reports no active task
     time.sleep(0.5)  # Give time for worker to reset state
