@@ -259,3 +259,77 @@ class Worker:
                 "error": str(e),
                 "exit_code": -1
             }
+
+    def abort_current_task(self) -> bool:
+        """
+        Abort the currently running task.
+        
+        Returns:
+            bool: True if task was aborted, False if no task was running
+        """
+        # First check if there's a current task without holding the lock
+        if not self._current_task or not self._process:
+            return False
+        
+        # Store task info for later use
+        task_id = self._current_task.task_id
+        script_path = self._current_task.script_path
+        
+        logger.info(f"Aborting task {task_id} ({script_path})")
+        
+        try:
+            # Terminate the process
+            self._process.terminate()
+            
+            # Give it a moment to terminate gracefully
+            import time
+            time.sleep(0.5)
+            
+            # If still running, kill it
+            if self._process.poll() is None:
+                self._process.kill()
+            
+            # Now acquire the lock to update task state and output
+            with self._queue_manager.get_lock():
+                # Check if task is still the current one (could have changed during termination)
+                if not self._current_task or self._current_task.task_id != task_id:
+                    logger.warning(f"Task {task_id} is no longer the current task")
+                    return False
+                
+                # Update output with abortion message
+                abort_message = "\n\n[Task was manually aborted]\n"
+                self._current_output += abort_message
+                
+                # Store current output before releasing lock
+                current_output = self._current_output
+                
+                # Prepare current task for reference after clearing
+                task = self._current_task
+                
+                # Clear current task
+                self._current_task = None
+            
+            # Create result for aborted task
+            result = {
+                "task_id": task_id,
+                "script_path": script_path,
+                "exit_code": -15,  # SIGTERM
+                "output": current_output,
+                "error": "Task was manually aborted"
+            }
+            
+            # Mark task as complete (canceled)
+            self._queue_manager.mark_task_complete(task_id, result, success=False)
+            
+            # Send email notification if enabled
+            if self._email_notifier and self._notify_on_failure:
+                self._email_notifier.send_task_aborted_notification(result)
+                
+            # Task done in queue
+            self._queue_manager.task_done()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error aborting task: {e}", exc_info=True)
+            return False

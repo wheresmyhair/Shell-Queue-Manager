@@ -194,3 +194,98 @@ def get_live_output():
             "status": "error",
             "message": str(e)
         }), HTTPStatus.INTERNAL_SERVER_ERROR
+
+
+@api_bp.route('/tasks/abort/<task_id>', methods=['POST'])
+def abort_task(task_id):
+    """Abort a specific task by ID."""
+    try:
+        queue_manager = current_app.config['QUEUE_MANAGER']
+        worker = current_app.config['WORKER']
+        
+        # First check if it's the current running task
+        current_task = worker.get_current_task()
+        if current_task and current_task.task_id == task_id:
+            # Abort current task
+            success = worker.abort_current_task()
+            if success:
+                return jsonify({
+                    "status": "success",
+                    "message": f"Running task {task_id} aborted successfully"
+                }), HTTPStatus.OK
+        
+        # If not running or abort failed, check if it's in queue
+        success = queue_manager.abort_task_by_id(task_id)
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": f"Queued task {task_id} aborted successfully"
+            }), HTTPStatus.OK
+        
+        return jsonify({
+            "status": "error",
+            "message": f"Task {task_id} not found or could not be aborted"
+        }), HTTPStatus.NOT_FOUND
+        
+    except Exception as e:
+        logger.error(f"Error aborting task: {e}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), HTTPStatus.INTERNAL_SERVER_ERROR
+
+
+@api_bp.route('/tasks/abort-by-path', methods=['POST'])
+def abort_tasks_by_path():
+    """Abort tasks matching a script path."""
+    try:
+        # Validate request
+        data = request.json
+        if not data or 'script_path' not in data:
+            return jsonify({
+                "status": "error", 
+                "message": "Missing script_path parameter"
+            }), HTTPStatus.BAD_REQUEST
+        
+        script_path = data['script_path']
+        
+        queue_manager = current_app.config['QUEUE_MANAGER']
+        worker = current_app.config['WORKER']
+        
+        # First check if it's the current running task
+        current_task = worker.get_current_task()
+        running_aborted = False
+        
+        if current_task and current_task.script_path == script_path:
+            # Abort current task
+            success = worker.abort_current_task()
+            running_aborted = success
+        
+        # Then abort any queued tasks with the same path
+        queued_aborted = queue_manager.abort_tasks_by_path(script_path, worker._email_notifier)
+        
+        if running_aborted or queued_aborted > 0:
+            message = []
+            if running_aborted:
+                message.append("Running task aborted successfully")
+            if queued_aborted > 0:
+                message.append(f"{queued_aborted} queued task(s) aborted successfully")
+                
+            return jsonify({
+                "status": "success",
+                "message": ". ".join(message),
+                "running_aborted": running_aborted,
+                "queued_aborted": queued_aborted
+            }), HTTPStatus.OK
+        
+        return jsonify({
+            "status": "error",
+            "message": f"No tasks matching path {script_path} found"
+        }), HTTPStatus.NOT_FOUND
+        
+    except Exception as e:
+        logger.error(f"Error aborting tasks: {e}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), HTTPStatus.INTERNAL_SERVER_ERROR

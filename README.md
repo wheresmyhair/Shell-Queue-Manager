@@ -9,6 +9,7 @@ A Python service for queueing and executing shell scripts via a REST API.
 - Priority queue support for urgent scripts
 - Comprehensive status tracking and querying
 - Real-time output monitoring of running scripts
+- Task abortion for running or queued scripts
 - Modular design for easy maintenance and extension
 
 ## Installation
@@ -113,3 +114,39 @@ The response will include the current stdout and stderr:
   "script_path": "/path/to/your/script.sh",
   "output": "Starting process...\nInitializing data...\n"
 }
+```
+
+## Task Abortion
+
+Shell Queue Manager now supports aborting tasks that are either running or queued. This allows you to:
+
+- Cancel a specific task by its ID
+- Cancel all tasks matching a specific script path
+- Automatically receive email notifications when tasks are aborted
+
+### Example Usage:
+
+To abort a specific task by ID:
+
+```bash
+# First, get the task ID from the status endpoint
+curl -X GET http://localhost:5000/api/status
+
+# Then abort using the task ID
+curl -X POST http://localhost:5000/api/tasks/abort/12345678-1234-5678-1234-567812345678
+```
+
+To abort all tasks associated with a specific script:
+
+```bash
+curl -X POST http://localhost:5000/api/tasks/abort-by-path \
+  -H "Content-Type: application/json" \
+  -d '{"script_path": "/path/to/your/script.sh"}'
+```
+
+The abort functionality behaves as follows:
+
+- If the task is currently running, the process will be terminated
+- If the task is in the queue, it will be removed
+- The task status will be marked as "canceled"
+- Email notifications will be sent if configured

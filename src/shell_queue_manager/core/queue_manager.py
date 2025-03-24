@@ -4,7 +4,8 @@ import threading
 import time
 from typing import Dict, List, Optional, Tuple, Any
 
-from shell_queue_manager.core.task import ShellTask, TaskStatus
+from shell_queue_manager.core.task import ShellTask
+from shell_queue_manager.utils.email import EmailNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,10 @@ class QueueManager:
         with self._lock:
             if task_id in self._active_tasks:
                 task = self._active_tasks[task_id]
-                task.complete(result, success)
+                if result["exit_code"] == -15:
+                    task.cancel()
+                else:
+                    task.complete(result, success)
                 self._completed_tasks[task_id] = task
                 del self._active_tasks[task_id]
     
@@ -112,3 +116,87 @@ class QueueManager:
     def get_lock(self) -> threading.Lock:
         """Get the queue manager's lock for thread-safe operations."""
         return self._lock
+
+    def abort_task_by_id(self, task_id: str) -> bool:
+        """
+        Abort a task by its ID.
+        
+        Args:
+            task_id: ID of the task to abort
+            
+        Returns:
+            True if task was found and aborted, False otherwise
+        """
+        with self._lock:
+            # Check if task is currently active
+            if task_id in self._active_tasks:
+                # Cannot abort active task here, must be done by worker
+                return False
+            
+            # Check if task is in queue
+            new_queue = queue.PriorityQueue()
+            found = False
+            
+            while not self._task_queue.empty():
+                try:
+                    priority, timestamp, task = self._task_queue.get_nowait()
+                    
+                    if task.task_id == task_id:
+                        # Mark task as canceled
+                        task.cancel()
+                        # Add to completed tasks
+                        self._completed_tasks[task_id] = task
+                        found = True
+                        self._task_queue.task_done()
+                        
+                        logger.info(f"Removed task {task_id} from queue")
+                    else:
+                        # Put back in queue
+                        new_queue.put((priority, timestamp, task))
+                except queue.Empty:
+                    break
+            
+            # Replace queue with new queue
+            self._task_queue = new_queue
+            
+            return found
+
+    def abort_tasks_by_path(self, script_path: str, email_notifier: EmailNotifier) -> int:
+        """
+        Abort all tasks matching a script path.
+        
+        Args:
+            script_path: Path of the script to abort
+            
+        Returns:
+            Number of tasks aborted
+        """
+        with self._lock:
+            # Check for queued tasks
+            new_queue = queue.PriorityQueue()
+            aborted_count = 0
+            
+            while not self._task_queue.empty():
+                try:
+                    priority, timestamp, task = self._task_queue.get_nowait()
+                    
+                    if task.script_path == script_path:
+                        # Mark task as canceled
+                        task.cancel()
+                        # Add to completed tasks
+                        self._completed_tasks[task.task_id] = task
+                        aborted_count += 1
+                        self._task_queue.task_done()
+                        email_notifier.send_task_aborted_notification(task.to_dict())
+                        
+                        logger.info(f"Removed task {task.task_id} from queue (matching path {script_path})")
+                    else:
+                        # Put back in queue
+                        new_queue.put((priority, timestamp, task))
+                except queue.Empty:
+                    break
+            
+            # Replace queue with new queue
+            self._task_queue = new_queue
+            
+            return aborted_count

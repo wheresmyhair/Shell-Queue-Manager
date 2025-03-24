@@ -159,6 +159,59 @@ class EmailNotifier:
         """
         
         return self._send_email(subject, text_content, html_content)
+
+    def send_task_aborted_notification(self, task: Dict[str, Any]) -> bool:
+        """
+        Send notification when a task is aborted.
+        
+        Args:
+            task: Task information dictionary
+            
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        if not self.enable:
+            logger.info("Email notifications disabled. Skipping task aborted notification.")
+            return False
+        
+        subject = f"[Shell Queue Manager] Task Aborted - {task.get('task_id', 'Unknown')}"
+        
+        # Prepare details
+        task_id = task.get('task_id', 'Unknown')
+        script_path = task.get('script_path', 'Unknown')
+        
+        html_content = f"""
+        <html>
+        <body>
+            <h2>Shell Queue Manager Alert</h2>
+            <p>A task has been manually aborted.</p>
+            
+            <h3>Task Details:</h3>
+            <ul>
+                <li><strong>Task ID:</strong> {task_id}</li>
+                <li><strong>Script Path:</strong> {script_path}</li>
+                <li><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</li>
+            </ul>
+            
+            <p>This is an automated notification from your Shell Queue Manager.</p>
+        </body>
+        </html>
+        """
+        
+        text_content = f"""
+        Shell Queue Manager Alert
+        
+        A task has been manually aborted.
+        
+        Task Details:
+        - Task ID: {task_id}
+        - Script Path: {script_path}
+        - Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        
+        This is an automated notification from your Shell Queue Manager.
+        """
+        
+        return self._send_email(subject, text_content, html_content)
     
     def _send_email(self, subject: str, text_content: str, html_content: Optional[str] = None) -> bool:
         """

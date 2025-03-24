@@ -59,3 +59,23 @@ class SubmitResponse(BaseModel):
     message: str = Field("Task submitted successfully", description="Response message")
     position: int = Field(..., description="Position in the queue")
     priority: bool = Field(False, description="Whether the task is prioritized")
+
+
+class AbortTasksByPathRequest(BaseModel):
+    """Schema for abort tasks by path request."""
+    script_path: str = Field(..., description="Path to the shell script to abort")
+    
+    @field_validator('script_path')
+    def validate_script_path(cls, v):
+        """Validate that the script path is not empty."""
+        if not v:
+            raise ValueError("Script path cannot be empty")
+        return v
+
+
+class AbortTaskResponse(BaseModel):
+    """Schema for abort task response."""
+    status: str = Field("success", description="Status of the request")
+    message: str = Field(..., description="Response message")
+    running_aborted: bool = Field(False, description="Whether a running task was aborted")
+    queued_aborted: int = Field(0, description="Number of queued tasks aborted")

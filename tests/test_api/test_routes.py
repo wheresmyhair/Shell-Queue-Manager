@@ -133,3 +133,88 @@ echo "Script finished"
     time.sleep(0.5)  # Give time for worker to reset state
     response = client.get('/api/live-output')
     assert response.status_code == HTTPStatus.NOT_FOUND
+
+def test_abort_task(client, tmp_path):
+    """Test aborting a task by ID."""
+    # Create a test script that runs for a while
+    script_path = tmp_path / "long_script.sh"
+    script_content = """#!/bin/bash
+echo "Starting long script"
+sleep 10
+echo "This should not be printed"
+"""
+    script_path.write_text(script_content)
+    script_path.chmod(0o755)
+    
+    # Submit the script
+    response = client.post(
+        '/api/submit',
+        json={'script_path': str(script_path)}
+    )
+    
+    assert response.status_code == HTTPStatus.CREATED
+    data = json.loads(response.data)
+    print(data)
+    task_id = data['task_id']
+    
+    # Wait a moment for the script to start running
+    time.sleep(1.0)
+    
+    # Abort the task
+    response = client.post(f'/api/tasks/abort/{task_id}')
+    assert response.status_code == HTTPStatus.OK
+    
+    data = json.loads(response.data)
+    print(data)
+    assert data['status'] == 'success'
+    assert 'aborted successfully' in data['message']
+    
+    # Verify the task was marked as canceled
+    time.sleep(0.5)  # Give time for worker to update status
+    response = client.get(f'/api/status/{task_id}')
+    
+    assert response.status_code == HTTPStatus.OK
+    data = json.loads(response.data)
+    assert data['status'] == 'canceled'
+
+@pytest.mark.dothis
+def test_abort_tasks_by_path(client, tmp_path):
+    """Test aborting tasks by script path."""
+    # Create a test script that will be queued multiple times
+    script_path = tmp_path / "duplicate_script.sh"
+    script_content = """#!/bin/bash
+echo "This script will be aborted"
+sleep 5
+"""
+    script_path.write_text(script_content)
+    script_path.chmod(0o755)
+    
+    # Submit the script multiple times
+    for _ in range(3):  # Submit 3 copies of the same script
+        response = client.post(
+            '/api/submit',
+            json={'script_path': str(script_path)}
+        )
+        assert response.status_code == HTTPStatus.CREATED
+    
+    # Wait a moment for the first script to start running
+    time.sleep(1.0)
+    
+    # Abort all tasks with this script path
+    response = client.post(
+        '/api/tasks/abort-by-path',
+        json={'script_path': str(script_path)}
+    )
+    
+    assert response.status_code == HTTPStatus.OK
+    data = json.loads(response.data)
+    print(data)
+    assert data['status'] == 'success'
+    assert data['running_aborted'] is True
+    assert data['queued_aborted'] == 2  # 2 queued + 1 running
+    
+    # Verify queue is now empty
+    response = client.get('/api/status')
+    assert response.status_code == HTTPStatus.OK
+    data = json.loads(response.data)
+    assert data['queue_size'] == 0
