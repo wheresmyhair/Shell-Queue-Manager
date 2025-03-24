@@ -108,3 +108,7 @@ class QueueManager:
             if task:
                 tasks.append(task.to_dict())
         return tasks
+    
+    def get_lock(self) -> threading.Lock:
+        """Get the queue manager's lock for thread-safe operations."""
+        return self._lock

@@ -38,6 +38,11 @@ class Worker:
         self._on_task_start: Optional[Callable[[ShellTask], None]] = None
         self._on_task_complete: Optional[Callable[[ShellTask], None]] = None
         
+        # Live output tracking
+        self._current_output = ""
+        self._process = None
+        self._output_thread = None
+        
         # Email notification settings
         self._email_notifier = email_notifier
         self._notify_on_failure = notify_on_failure
@@ -67,6 +72,15 @@ class Worker:
         """Get the currently executing task."""
         return self._current_task
     
+    def get_current_output(self) -> Dict[str, Any]:
+        """Get the current task's output."""
+        with self._queue_manager.get_lock():
+            return {
+                "output": self._current_output,
+                "task_id": self._current_task.task_id if self._current_task else None,
+                "script_path": self._current_task.script_path if self._current_task else None,
+            }
+    
     def set_callbacks(
         self,
         on_task_start: Optional[Callable[[ShellTask], None]] = None,
@@ -91,6 +105,18 @@ class Worker:
         
         self._last_queue_size = current_size
     
+    def _output_reader(self, stream):
+        """Read from a stream line by line and append to the output buffer."""
+        try:
+            for line in iter(stream.readline, ''):
+                if line:
+                    with self._queue_manager.get_lock():
+                        self._current_output += line
+        except Exception as e:
+            logger.error(f"Error reading from stream: {e}")
+            with self._queue_manager.get_lock():
+                self._current_output += f"\nError reading output: {str(e)}\n"
+        
     def _worker_loop(self) -> None:
         """Main worker loop that processes tasks from the queue."""
         while self._running:
@@ -129,7 +155,8 @@ class Worker:
                 # Mark queue task as done
                 self._queue_manager.task_done()
                 
-                self._current_task = None
+                with self._queue_manager.get_lock():
+                    self._current_task = None
                 
             except Exception as e:
                 logger.error(f"Worker error: {e}", exc_info=True)
@@ -140,6 +167,10 @@ class Worker:
         try:
             # Mark task as running
             task.start()
+            
+            # Reset output buffer
+            with self._queue_manager.get_lock():
+                self._current_output = ""
             
             # Check if script exists
             if not os.path.isfile(task.script_path):
@@ -157,22 +188,51 @@ class Worker:
             # Execute script
             logger.info(f"Executing script: {task.script_path}")
             
-            # Execute the shell script and capture output
-            process = subprocess.Popen(
+            # Execute the shell script and capture output in real-time
+            # Redirect stderr to stdout to merge the streams
+            self._process = subprocess.Popen(
                 ['/bin/bash', task.script_path],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+                stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+                text=True,
+                bufsize=1  # Line buffered is sufficient for merged streams
             )
-            stdout, stderr = process.communicate()
+            
+            # Setup thread to read merged output in real-time
+            self._output_thread = threading.Thread(
+                target=self._output_reader,
+                args=(self._process.stdout,)
+            )
+            
+            self._output_thread.daemon = True
+            self._output_thread.start()
+            
+            # Wait for process to complete
+            exit_code = self._process.wait()
+            
+            # Wait for reader thread to finish
+            if self._output_thread.is_alive():
+                self._output_thread.join(timeout=1.0)
+            
+            # Ensure we've captured all remaining output
+            try:
+                remaining_output, _ = self._process.communicate(timeout=1.0)
+                if remaining_output:
+                    with self._queue_manager.get_lock():
+                        self._current_output += remaining_output
+            except subprocess.TimeoutExpired:
+                logger.warning("Timeout while reading remaining output")
+                
+            # Get final output
+            with self._queue_manager.get_lock():
+                output = self._current_output
             
             # Prepare result
             result = {
                 "task_id": task.task_id,
                 "script_path": task.script_path,
-                "exit_code": process.returncode,
-                "stdout": stdout,
-                "stderr": stderr
+                "exit_code": exit_code,
+                "output": output,
             }
             
             return result

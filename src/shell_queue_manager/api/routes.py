@@ -8,7 +8,8 @@ from shell_queue_manager.api.schemas import (
     SubmitResponse, 
     QueueStatusResponse, 
     TaskResponse, 
-    TaskListResponse
+    TaskListResponse,
+    LiveOutputResponse
 )
 from shell_queue_manager.core.task import ShellTask
 
@@ -149,6 +150,46 @@ def clear_queue():
         
     except Exception as e:
         logger.error(f"Error clearing queue: {e}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), HTTPStatus.INTERNAL_SERVER_ERROR
+
+
+@api_bp.route('/live-output', methods=['GET'])
+def get_live_output():
+    """Get the live output of the currently running task."""
+    try:
+        worker = current_app.config['WORKER']
+        
+        if not worker.is_running():
+            return jsonify({
+                "status": "error",
+                "message": "Worker is not running"
+            }), HTTPStatus.BAD_REQUEST
+        
+        current_task = worker.get_current_task()
+        if not current_task:
+            return jsonify({
+                "status": "error",
+                "message": "No task is currently running"
+            }), HTTPStatus.NOT_FOUND
+        
+        # Get live output
+        output = worker.get_current_output()
+        
+        # Prepare response
+        response = {
+            "status": "success",
+            "task_id": output["task_id"],
+            "script_path": output["script_path"],
+            "output": output["output"]
+        }
+        
+        return jsonify(response), HTTPStatus.OK
+        
+    except Exception as e:
+        logger.error(f"Error getting live output: {e}", exc_info=True)
         return jsonify({
             "status": "error",
             "message": str(e)

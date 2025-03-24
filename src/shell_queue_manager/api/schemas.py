@@ -30,6 +30,14 @@ class TaskResponse(BaseModel):
     result: Optional[Dict[str, Any]] = Field(None, description="Execution result if completed")
 
 
+class LiveOutputResponse(BaseModel):
+    """Schema for live output response."""
+    status: str = Field("success", description="Status of the request")
+    task_id: str = Field(..., description="ID of the currently running task")
+    script_path: str = Field(..., description="Path to the script being executed")
+    output: str = Field("", description="Current output from the script (stdout and stderr combined)")
+
+
 class QueueStatusResponse(BaseModel):
     """Schema for queue status response."""
     queue_size: int = Field(..., description="Number of tasks waiting in queue")
@@ -51,4 +59,3 @@ class SubmitResponse(BaseModel):
     message: str = Field("Task submitted successfully", description="Response message")
     position: int = Field(..., description="Position in the queue")
     priority: bool = Field(False, description="Whether the task is prioritized")
-
