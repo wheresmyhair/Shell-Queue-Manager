@@ -36,7 +36,7 @@ def submit_script():
             return jsonify({"status": "error", "message": str(e)}), HTTPStatus.BAD_REQUEST
         
         # Check if script exists
-        if not os.path.isfile(task.script_path):
+        if not os.path.isfile(task_request.script_path):
             return jsonify({"status": "error", "message": f"File not found: {task.script_path}"}), HTTPStatus.BAD_REQUEST
         
         # Create task
